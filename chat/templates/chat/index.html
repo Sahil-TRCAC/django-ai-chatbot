@@ -1,0 +1,219 @@
+{% extends 'chat/base.html' %}
+
+{% block content %}
+<div class="app-container">
+    <!-- Sidebar -->
+    <div class="sidebar" id="sidebar">
+        <button class="new-chat-btn" onclick="createNewConversation()">
+            + New Chat
+        </button>
+        
+        <div class="conversations-list" id="conversationsList">
+            {% for conv in conversations %}
+            <div class="conversation-item {% if current_conversation and current_conversation.id == conv.id %}active{% endif %}"
+                 data-conv-id="{{ conv.id }}"
+                 onclick="window.location.href='/conversation/{{ conv.id }}/'">
+                <span class="conversation-title">{{ conv.title }}</span>
+                <button class="delete-conv" onclick="event.stopPropagation(); deleteConversation({{ conv.id }})">🗑️</button>
+            </div>
+            {% empty %}
+            <div style="text-align: center; color: #8e8ea0; padding: 20px;">
+                No conversations yet
+            </div>
+            {% endfor %}
+        </div>
+        
+        <div class="user-info">
+            {{ user.username }}
+            <form method="POST" action="{% url 'logout' %}" style="display: inline;">
+                {% csrf_token %}
+                <button type="submit" class="logout-btn">Logout</button>
+            </form>
+        </div>
+    </div>
+    
+    <!-- Main Chat Area -->
+    <div class="chat-area">
+        <div class="chat-header">
+            <h1>AI Chat Assistant</h1>
+        </div>
+        
+        <div class="messages-container" id="messagesContainer">
+            {% if messages %}
+                {% for message in messages %}
+                <div class="message {% if message.is_user %}user-message{% else %}ai-message{% endif %}">
+                    <div class="message-icon {% if message.is_user %}user-icon{% else %}ai-icon{% endif %}">
+                        {% if message.is_user %}👤{% else %}🤖{% endif %}
+                    </div>
+                    <div class="message-content">{{ message.content|linebreaksbr }}</div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div style="text-align: center; color: #8e8ea0; margin-top: 100px;">
+                    <h2>Welcome to AI Chat Assistant!</h2>
+                    <p>Start a conversation by typing a message below.</p>
+                </div>
+            {% endif %}
+        </div>
+        
+        <div class="input-area">
+            <div class="input-wrapper">
+                <textarea class="message-input" id="messageInput" placeholder="Send a message..." rows="1" 
+                    onkeydown="if(event.key === 'Enter' && !event.shiftKey){event.preventDefault();sendMessage();}"></textarea>
+                <button class="send-btn" onclick="sendMessage()">➤</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    let currentConversationId = {{ conversation_id|default:'null' }};
+    let isWaitingForResponse = false;
+    
+    function scrollToBottom() {
+        const container = document.getElementById('messagesContainer');
+        container.scrollTop = container.scrollHeight;
+    }
+    
+    function createNewConversation() {
+        fetch('/api/new-conversation/', {
+            method: 'POST',
+            headers: {
+                'X-CSRFToken': csrftoken,
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            window.location.href = `/conversation/${data.conversation_id}/`;
+        });
+    }
+    
+    function deleteConversation(convId) {
+        if (confirm('Are you sure you want to delete this conversation?')) {
+            fetch(`/api/delete-conversation/${convId}/`, {
+                method: 'DELETE',
+                headers: {
+                    'X-CSRFToken': csrftoken,
+                }
+            })
+            .then(() => {
+                window.location.href = '/';
+            });
+        }
+    }
+    
+    function addMessage(content, isUser) {
+        const container = document.getElementById('messagesContainer');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = `message ${isUser ? 'user-message' : 'ai-message'}`;
+        messageDiv.innerHTML = `
+            <div class="message-icon ${isUser ? 'user-icon' : 'ai-icon'}">
+                ${isUser ? '👤' : '🤖'}
+            </div>
+            <div class="message-content">${escapeHtml(content).replace(/\n/g, '<br>')}</div>
+        `;
+        container.appendChild(messageDiv);
+        scrollToBottom();
+    }
+    
+    function showTypingIndicator() {
+        const container = document.getElementById('messagesContainer');
+        const typingDiv = document.createElement('div');
+        typingDiv.id = 'typingIndicator';
+        typingDiv.className = 'typing-indicator';
+        typingDiv.innerHTML = '🤖 AI is typing...';
+        container.appendChild(typingDiv);
+        scrollToBottom();
+    }
+    
+    function removeTypingIndicator() {
+        const indicator = document.getElementById('typingIndicator');
+        if (indicator) indicator.remove();
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    function sendMessage() {
+        if (isWaitingForResponse) return;
+        
+        const input = document.getElementById('messageInput');
+        const message = input.value.trim();
+        
+        if (!message) return;
+        
+        // Add user message to UI
+        addMessage(message, true);
+        input.value = '';
+        input.style.height = 'auto';
+        
+        // Show typing indicator
+        showTypingIndicator();
+        isWaitingForResponse = true;
+        
+        // Send to server
+        fetch('/api/send-message/', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'X-CSRFToken': csrftoken,
+            },
+            body: JSON.stringify({
+                message: message,
+                conversation_id: currentConversationId
+            })
+        })
+        .then(response => response.json())
+        .then(data => {
+            removeTypingIndicator();
+            
+            if (data.error) {
+                addMessage(`Error: ${data.error}`, false);
+            } else {
+                addMessage(data.ai_message.content, false);
+                
+                // Update conversation ID if new
+                if (!currentConversationId) {
+                    currentConversationId = data.conversation_id;
+                    window.history.pushState({}, '', `/conversation/${data.conversation_id}/`);
+                    
+                    // Update sidebar
+                    const convList = document.getElementById('conversationsList');
+                    const newConvDiv = document.createElement('div');
+                    newConvDiv.className = 'conversation-item active';
+                    newConvDiv.setAttribute('data-conv-id', data.conversation_id);
+                    newConvDiv.onclick = () => window.location.href = `/conversation/${data.conversation_id}/`;
+                    newConvDiv.innerHTML = `
+                        <span class="conversation-title">${escapeHtml(data.conversation_title)}</span>
+                        <button class="delete-conv" onclick="event.stopPropagation(); deleteConversation(${data.conversation_id})">🗑️</button>
+                    `;
+                    
+                    // Remove empty state message if exists
+                    const emptyMsg = convList.querySelector('div[style*="text-align: center"]');
+                    if (emptyMsg) emptyMsg.remove();
+                    
+                    convList.insertBefore(newConvDiv, convList.firstChild);
+                }
+            }
+            isWaitingForResponse = false;
+        })
+        .catch(error => {
+            removeTypingIndicator();
+            addMessage(`Error: ${error.message}`, false);
+            isWaitingForResponse = false;
+        });
+    }
+    
+    // Auto-resize textarea
+    const textarea = document.getElementById('messageInput');
+    textarea.addEventListener('input', function() {
+        this.style.height = 'auto';
+        this.style.height = Math.min(this.scrollHeight, 150) + 'px';
+    });
+    
+    scrollToBottom();
+</script>
+{% endblock %}

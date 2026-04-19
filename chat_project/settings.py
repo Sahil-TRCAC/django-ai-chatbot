@@ -94,4 +94,4 @@ LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
 
 # ✅ Gemini API (CORRECT WAY)
-GEMINI_API_KEY = os.getenv("AIzaSyABv4BFQnhiszjqVu8UxIE4BFdRS7Adswo")
+# GEMINI_API_KEY = os.getenv("AIzaSyABv4BFQnhiszjqVu8UxIE4BFdRS7Adswo")
